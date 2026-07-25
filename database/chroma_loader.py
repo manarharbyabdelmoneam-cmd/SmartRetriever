@@ -76,6 +76,47 @@ class ChromaLoader:
         logger.info(f"📊 Documents in collection: {self.collection.count()}")
 
     # ============================================================
+    # طرق مساعدة (Helpers)
+    # ============================================================
+
+    @staticmethod
+    def _sanitize_metadata(metadata: Dict[str, Any]) -> Dict[str, Union[str, int, float, bool]]:
+        """
+        تنظيف البيانات الوصفية لتتوافق مع أنواع Chroma المدعومة
+        (str, int, float, bool فقط - بدون None أو list أو dict)
+        
+        Args:
+            metadata: البيانات الوصفية الأصلية
+            
+        Returns:
+            البيانات الوصفية بعد التنظيف
+        """
+        if not metadata:
+            return {}
+        
+        sanitized: Dict[str, Union[str, int, float, bool]] = {}
+        
+        for key, value in metadata.items():
+            if value is None:
+                # تجاهل القيم الفارغة (Chroma بيرفض None)
+                continue
+            elif isinstance(value, bool):
+                sanitized[key] = value
+            elif isinstance(value, (int, float, str)):
+                sanitized[key] = value
+            elif isinstance(value, (list, tuple, set)):
+                # تحويل القوائم لنص مفصول بفواصل
+                sanitized[key] = ", ".join(str(v) for v in value)
+            elif isinstance(value, dict):
+                # تحويل الـ dict لنص (أو ممكن تسطيحه لو محتاجة كل مفتاح لوحده)
+                sanitized[key] = str(value)
+            else:
+                # أي نوع تاني غير مدعوم يتحول لنص كـ fallback آمن
+                sanitized[key] = str(value)
+        
+        return sanitized
+
+    # ============================================================
     # طرق البحث
     # ============================================================
     
@@ -184,11 +225,13 @@ class ChromaLoader:
             نجاح العملية
         """
         try:
+            clean_metadata = self._sanitize_metadata(metadata)
+            
             self.collection.add(
                 ids=[doc_id],
                 embeddings=[embedding],
                 documents=[text],
-                metadatas=[metadata]
+                metadatas=[clean_metadata]
             )
             
             self.stats["total_documents"] = self.collection.count()
@@ -225,7 +268,7 @@ class ChromaLoader:
                 ids.append(doc.get("id", str(uuid.uuid4())))
                 texts.append(doc.get("text", ""))
                 embeddings.append(doc.get("embedding", []))
-                metadatas.append(doc.get("metadata", {}))
+                metadatas.append(self._sanitize_metadata(doc.get("metadata", {})))
             
             self.collection.add(
                 ids=ids,
@@ -284,7 +327,7 @@ class ChromaLoader:
         try:
             # حذف المستند القديم
             self.collection.delete(ids=[doc_id])
-            # إضافة المستند الجديد
+            # إضافة المستند الجديد (بيتنضف تلقائياً جوه add_document)
             return self.add_document(doc_id, text, embedding, metadata)
             
         except Exception as e:
