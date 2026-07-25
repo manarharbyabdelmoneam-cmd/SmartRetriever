@@ -6,15 +6,103 @@
 import sys
 import asyncio
 from pathlib import Path
+import numpy as np
 
 sys.path.append(str(Path(__file__).parent.parent))
 
 from core.config import settings
 from database.docx_loader import DocxLoader
 from database.embeddings import Embeddings
-from database.chroma_loader import ChromaLoader  # ✅ استبدال FAISSLoader بـ ChromaLoader
+from database.chroma_loader import ChromaLoader
 from utils.logger import logger
 
+
+# ============================================================
+# ✅ دالة تنظيف البيانات الوصفية لتكون متوافقة مع Chroma
+# ============================================================
+
+def clean_metadata(metadata: dict) -> dict:
+    """
+    تنظيف البيانات الوصفية لتكون متوافقة مع Chroma
+    
+    Chroma يقبل فقط:
+    - str, int, float, bool
+    - لا يقبل: None, list, dict, set, tuple
+    
+    Args:
+        metadata: البيانات الوصفية غير النظيفة
+        
+    Returns:
+        البيانات الوصفية النظيفة
+    """
+    cleaned = {}
+    for key, value in metadata.items():
+        # تخطي المفاتيح الفارغة
+        if not key:
+            continue
+            
+        # ============================================================
+        # 1. معالجة القيم الفارغة (None)
+        # ============================================================
+        if value is None:
+            cleaned[key] = "unknown"
+            continue
+        
+        # ============================================================
+        # 2. معالجة الأنواع الأساسية المدعومة
+        # ============================================================
+        if isinstance(value, (str, int, float, bool)):
+            cleaned[key] = value
+            continue
+        
+        # ============================================================
+        # 3. معالجة القوائم والمجموعات
+        # ============================================================
+        if isinstance(value, (list, tuple, set)):
+            # تحويل إلى نص مفصول بفواصل
+            try:
+                # استخراج القيم النصية فقط
+                str_values = [str(v) for v in value if v is not None]
+                if str_values:
+                    cleaned[key] = ", ".join(str_values)
+                else:
+                    cleaned[key] = "empty_list"
+            except:
+                cleaned[key] = str(value)
+            continue
+        
+        # ============================================================
+        # 4. معالجة القواميس (dict)
+        # ============================================================
+        if isinstance(value, dict):
+            # تحويل القاموس إلى نص key=value, key2=value2
+            try:
+                items = []
+                for k, v in value.items():
+                    if v is not None:
+                        items.append(f"{k}={v}")
+                if items:
+                    cleaned[key] = "; ".join(items)
+                else:
+                    cleaned[key] = "empty_dict"
+            except:
+                cleaned[key] = str(value)
+            continue
+        
+        # ============================================================
+        # 5. أي نوع آخر - تحويل إلى نص
+        # ============================================================
+        try:
+            cleaned[key] = str(value)
+        except:
+            cleaned[key] = "unknown_type"
+    
+    return cleaned
+
+
+# ============================================================
+# 🔨 بناء الفهرس
+# ============================================================
 
 async def build_index():
     logger.info("🔨 Starting index build with Chroma...")
@@ -43,6 +131,10 @@ async def build_index():
                     }
                     chunk["metadata"]["category"] = category_dir.name
                     chunk["metadata"]["filename"] = file_path.name
+                    
+                    # ✅ تنظيف البيانات الوصفية قبل الإضافة
+                    chunk["metadata"] = clean_metadata(chunk["metadata"])
+                    
                     all_chunks.append(chunk)
                     logger.info(f"✅ Loaded: {file_path.name}")
                 else:
@@ -76,29 +168,38 @@ async def build_index():
     for i, (chunk, vector) in enumerate(zip(all_chunks, vectors)):
         doc_id = f"doc_{i}_{chunk['metadata'].get('filename', 'unknown')}"
         
-        # تحويل المتجه إلى قائمة (إذا كان numpy array)
+        # ✅ تحويل المتجه إلى قائمة (إذا كان numpy array)
         if hasattr(vector, 'tolist'):
             vector = vector.tolist()
         elif hasattr(vector, 'numpy'):
             vector = vector.numpy().tolist()
         elif isinstance(vector, np.ndarray):
             vector = vector.tolist()
+        elif not isinstance(vector, list):
+            vector = list(vector)
+        
+        # ✅ التأكد من أن البيانات الوصفية نظيفة مرة أخرى
+        clean_meta = clean_metadata(chunk.get("metadata", {}))
         
         documents_to_add.append({
             "id": doc_id,
             "text": chunk.get("text", ""),
             "embedding": vector,
-            "metadata": chunk.get("metadata", {})
+            "metadata": clean_meta
         })
 
-    # إضافة جميع المستندات دفعة واحدة
-    added_count = chroma_loader.add_documents(documents_to_add)
-    
-    if added_count > 0:
-        logger.info(f"✅ Index built and saved! ({added_count} documents in Chroma)")
-        return True
+    # ✅ إضافة جميع المستندات دفعة واحدة
+    if documents_to_add:
+        added_count = chroma_loader.add_documents(documents_to_add)
+        
+        if added_count > 0:
+            logger.info(f"✅ Index built and saved! ({added_count} documents in Chroma)")
+            return True
+        else:
+            logger.error("❌ Failed to save index!")
+            return False
     else:
-        logger.error("❌ Failed to save index!")
+        logger.error("❌ No documents to add!")
         return False
 
 
