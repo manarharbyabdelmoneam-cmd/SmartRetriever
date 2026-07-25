@@ -1,4 +1,3 @@
-# database/docx_loader.py
 """
 📝 تحميل النصوص من ملفات DOCX
 
@@ -14,6 +13,59 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 
 from utils.logger import logger
+
+
+# ============================================================
+# ✅ دالة تنظيف البيانات الوصفية
+# ============================================================
+
+def clean_metadata_for_chroma(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    تنظيف البيانات الوصفية لتكون متوافقة مع Chroma
+    
+    Chroma يقبل فقط:
+    - str, int, float, bool, None
+    
+    Args:
+        metadata: البيانات الوصفية
+        
+    Returns:
+        البيانات الوصفية النظيفة
+    """
+    cleaned = {}
+    
+    for key, value in metadata.items():
+        # تخطي القيم الفارغة
+        if value is None:
+            cleaned[key] = None
+        elif isinstance(value, (str, int, float, bool)):
+            cleaned[key] = value
+        elif isinstance(value, (list, tuple, set)):
+            # تحويل المجموعات إلى سلسلة
+            try:
+                cleaned[key] = str(list(value))
+            except:
+                cleaned[key] = str(value)
+        elif isinstance(value, dict):
+            # تحويل القواميس إلى سلسلة
+            try:
+                cleaned[key] = str(value)
+            except:
+                cleaned[key] = str(value)
+        elif isinstance(value, datetime):
+            # تحويل التواريخ إلى سلسلة ISO
+            try:
+                cleaned[key] = value.isoformat()
+            except:
+                cleaned[key] = str(value)
+        else:
+            # أي نوع آخر يتم تحويله إلى سلسلة
+            try:
+                cleaned[key] = str(value)
+            except:
+                cleaned[key] = None
+    
+    return cleaned
 
 
 class DocxLoader:
@@ -70,6 +122,9 @@ class DocxLoader:
                 return None
 
             metadata = self.extract_metadata(path)
+            
+            # ✅ تنظيف البيانات الوصفية قبل الإرجاع
+            metadata = clean_metadata_for_chroma(metadata)
 
             if self.clean_text:
                 text = self._clean_extracted_text(text)
@@ -259,8 +314,9 @@ class DocxLoader:
             logger.debug(f"⚠️ Could not extract metadata: {str(e)}")
 
         metadata["loaded_at"] = datetime.now().isoformat()
-
-        return metadata
+        
+        # ✅ تنظيف البيانات الوصفية قبل الإرجاع
+        return clean_metadata_for_chroma(metadata)
 
     def _extract_core_properties(self, content: str) -> Dict[str, Any]:
         properties = {}
@@ -398,4 +454,4 @@ class DocxLoader:
             except Exception:
                 pass
 
-        return info
+        return clean_metadata_for_chroma(info)
