@@ -165,4 +165,3 @@ class ChatService:
 
     def get_stats(self) -> Dict[str, Any]:
         return {**self.stats, "active_conversations": len(self.conversations)}
-
