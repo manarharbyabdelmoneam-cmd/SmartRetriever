@@ -90,9 +90,16 @@ class Retriever:
         # 1. توليد متجه للسؤال
         query_vector = await self.embeddings.encode(query)
         
+        # تحويل لـ list عادية
+        raw_vector = query_vector.tolist() if hasattr(query_vector, 'tolist') else query_vector
+        
+        # ✅ التأكد إن الشكل 1D مش batched (يعني [x,y,z] مش [[x,y,z]])
+        if isinstance(raw_vector, list) and len(raw_vector) > 0 and isinstance(raw_vector[0], list):
+            raw_vector = raw_vector[0]
+        
         # 2. البحث في Chroma (مع دعم التصفية المدمج)
         results = await self.chroma_loader.search(  # ✅ استخدام Chroma
-            query_vector=query_vector.tolist() if hasattr(query_vector, 'tolist') else query_vector,
+            query_vector=raw_vector,
             top_k=top_k or self.top_k,
             filter_category=filter_category,  # ✅ تصفية مدمجة
             filter_supplier=filter_supplier,  # ✅ تصفية مدمجة
